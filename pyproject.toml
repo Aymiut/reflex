@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reflex-phish"
+version = "0.1.0"
+description = "Tri des signalements de phishing en deux vitesses : Laya en local, un agent Meta pour les cas douteux"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.66",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+    "pillow>=10.1",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "pytesseract>=0.3.10",
+    "qrcode[pil]>=7.4",
+    "tldextract>=5.1",
+    "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+laya = ["laya>=0.4.15"]
+data = ["huggingface_hub>=0.24", "pandas>=2.1", "datasets>=2.20"]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["reflex"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,20 @@
+# Pour l'instant : uniquement Pi-hole (le DNS que l'agent mettra à jour pour bloquer un domaine).
+# Le service applicatif (bot + pipeline + navigateur isolé) arrive dans les prochains jours.
+services:
+  pihole:
+    image: pihole/pihole:2025.03.0
+    container_name: reflex-pihole
+    environment:
+      TZ: Europe/Paris
+      FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD:-change-moi}
+      FTLCONF_dns_listeningMode: all
+    ports:
+      - "8081:80/tcp"     # interface web + API : http://localhost:8081/admin
+      - "1053:53/tcp"     # DNS sur 1053 pour ne pas gêner celui du Mac
+      - "1053:53/udp"
+    volumes:
+      - pihole:/etc/pihole
+    restart: unless-stopped
+
+volumes:
+  pihole:
