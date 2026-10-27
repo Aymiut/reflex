@@ -39,6 +39,9 @@ Garde-fou : l'agent n'a pas le droit de conclure « légitime » sur un cas que 
 | `reflex/triage.py` | Étage 1 : Laya et les seuils fermer / bloquer / escalader |
 | `reflex/meta.py` | Client Meta Model API : Muse Spark, SAM 3.1, Voice Transcribe ; Muse Glimmer via un fournisseur |
 | `reflex/sam_format.py` | Lecture de la sortie de SAM 3.1 (boîtes) |
+| `reflex/pipeline.py` | Chaîne d'un signalement : étage 0 puis Laya, indépendante de Telegram |
+| `reflex/bot.py` | Bot Telegram (`reflex-bot`) : captures, photos, `.eml`, vocaux, textes et liens |
+| `reflex/replies.py` | Réponses du bot (anglais ou français), liens rendus non cliquables |
 | `scripts/smoke_meta.py` | Vérifie en une minute que ta clé donne accès à tout |
 | `scripts/build_laya_dataset.py` | Fabrique les données d'entraînement de Laya |
 | `scripts/eval_laya.py` | Mesure Laya et choisit les seuils de la cascade |
@@ -49,7 +52,7 @@ Garde-fou : l'agent n'a pas le droit de conclure « légitime » sur un cas que 
 ```bash
 brew install tesseract tesseract-lang ffmpeg
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[laya,data,dev]"
+pip install -e ".[laya,data,dev,bot]"
 cp .env.example .env        # puis colle ta clé MODEL_API_KEY
 chmod 600 .env              # lisible par ton compte seulement
 pytest                      # tout doit passer
@@ -67,6 +70,9 @@ pytest                      # tout doit passer
    Récupère `laya-reflex.zip`, dézippe dans `models/`, puis mets `LAYA_MODEL=./models/laya-reflex` dans `.env`.
 4. **Pi-hole** : définis `PIHOLE_PASSWORD` dans `.env`, puis `docker compose up -d pihole`
    (interface sur http://localhost:8081/admin, accessible depuis ce Mac uniquement).
+5. **Bot Telegram** : mets le token de @BotFather dans `TELEGRAM_BOT_TOKEN`, puis lance `reflex-bot`.
+   Le bot ne répond qu'aux identifiants listés dans `TELEGRAM_ALLOWED_USERS` : envoie-lui `/start`,
+   il te donne ton identifiant, ajoute-le, puis relance-le. Réponses en anglais par défaut (`BOT_LANG=fr` pour le français).
 
 ## Ce qu'on mesure
 

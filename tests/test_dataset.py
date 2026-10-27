@@ -24,6 +24,14 @@ def test_to_extraction_by_channel():
     assert build.to_extraction("sms", "   ") is None
 
 
+def test_texts_file_is_split_into_email_and_sms():
+    assert build._channel_from_filename("texts.json") == "text"
+    assert build._channel_from_filename("combined_reduced.json") is None
+    assert build._text_channel("WINNER!! You have won a £900 prize. Call 09061701461 now") == "sms"
+    assert build._text_channel("re : meeting tomorrow , please confirm the room . thanks") == "email"
+    assert build._text_channel("Dear user, " + "x" * 500) == "email"
+
+
 def test_labels_and_rows():
     assert build.label_of(1) == "phishing" and build.label_of("ham") == "legitimate" and build.label_of("?") is None
     r = build.row(build.to_extraction("sms", "Hello"), "legitimate", "test")

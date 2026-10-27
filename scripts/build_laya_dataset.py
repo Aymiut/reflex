@@ -69,12 +69,22 @@ def _channel_from_filename(name: str) -> Optional[str]:
     n = name.lower()
     if "combined" in n:
         return None  # on prend les sous-ensembles pour connaître le canal de chaque ligne
-    # texts.json mélange e-mails (~83 %) et SMS sans colonne pour les distinguer : on le range en "email".
+    # "text" : texts.json mélange e-mails et SMS ; le canal est choisi ligne par ligne (_text_channel).
     for key, channel in (("email", "email"), ("sms", "sms"), ("url", "url"), ("web", "page"), ("site", "page"),
-                         ("text", "email")):
+                         ("text", "text")):
         if key in n:
             return channel
     return None
+
+
+def _text_channel(text: str) -> str:
+    """E-mail ou SMS, pour une ligne de texts.json (pas de colonne qui le dit).
+
+    Les e-mails du corpus (Enron, spam) sont en minuscules avec la ponctuation détachée (« hi , there ») ;
+    les SMS sont courts et gardent leurs majuscules. Le bot range un texte collé dans le canal sms.
+    """
+    t = text.strip()
+    return "sms" if len(t) <= 400 and t != t.lower() and " , " not in t else "email"
 
 
 def _read_table(path: str):
@@ -108,8 +118,9 @@ def load_ealvaradob() -> Dict[str, List[tuple]]:
         for text, lab in zip(df[text_col], df[label_col]):
             label = label_of(lab)
             if label and isinstance(text, str):
-                by_channel[channel].append((text, label))
-        print(f"  {f} -> {channel} : {len(df)} lignes")
+                by_channel[_text_channel(text) if channel == "text" else channel].append((text, label))
+        print(f"  {f} -> {'email + sms' if channel == 'text' else channel} : {len(df)} lignes")
+    print("  par canal : " + ", ".join(f"{c}={len(v)}" for c, v in sorted(by_channel.items())))
     if not by_channel:
         raise SystemExit("Aucun sous-ensemble reconnu : regarde la liste des fichiers ci-dessus et adapte "
                          "_channel_from_filename().")

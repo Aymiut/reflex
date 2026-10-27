@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import FrozenSet
 
 try:
     from dotenv import load_dotenv
@@ -16,6 +18,15 @@ except ImportError:  # python-dotenv est optionnel
 def _float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     return float(raw) if raw not in (None, "") else default
+
+
+def _ids(name: str) -> FrozenSet[int]:
+    """Liste d'identifiants Telegram séparés par des virgules ou des espaces."""
+    raw = os.environ.get(name, "")
+    try:
+        return frozenset(int(x) for x in re.split(r"[\s,;]+", raw) if x)
+    except ValueError:
+        raise ValueError(f"{name} doit contenir des identifiants numériques séparés par des virgules") from None
 
 
 @dataclass(frozen=True)
@@ -45,6 +56,10 @@ class Settings:
 
     # Telegram
     telegram_token: str = field(default_factory=lambda: os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+    # Comptes autorisés à utiliser le bot. Vide = personne (le bot répond avec l'identifiant à ajouter).
+    telegram_allowed_users: FrozenSet[int] = field(default_factory=lambda: _ids("TELEGRAM_ALLOWED_USERS"))
+    # Langue des réponses du bot : "en" (démo devant un jury anglophone) ou "fr"
+    bot_lang: str = field(default_factory=lambda: os.environ.get("BOT_LANG", "en"))
 
     # Pi-hole
     pihole_url: str = field(default_factory=lambda: os.environ.get("PIHOLE_URL", "http://localhost:8081"))
