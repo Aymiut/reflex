@@ -30,6 +30,18 @@ signalement (Telegram) ──► Étage 0 : extraction locale, gratuite
 
 Garde-fou : l'agent n'a pas le droit de conclure « légitime » sur un cas que Laya juge risqué sans preuve concrète.
 
+## Où on en est
+
+| Étape | État |
+|---|---|
+| Étage 0 : extraction locale (OCR, QR codes, URLs, `.eml`, audio) | fait |
+| Étage 1 : Laya fine-tuné sur le corpus public | fait (v1, 27 oct.) |
+| Laya réentraîné avec des pages de phishing récentes (PhreshPhish 2024-2025) | entraînement en cours (v2) |
+| Bot Telegram (captures, photos, `.eml`, vocaux, textes, liens) | fait, sur liste d'utilisateurs autorisés |
+| Accès Meta : Muse Spark, SAM 3.1, Voice Transcribe | vérifié |
+| Étage 2 : agent Meta sur les cas incertains | en cours |
+| Blocage DNS par Pi-hole | à faire |
+
 ## Ce qui existe aujourd'hui
 
 | Fichier | Rôle |
@@ -71,6 +83,9 @@ pytest                      # tout doit passer
    Options : `--translate-fr 300` (traductions françaises par Muse Spark) et `--synth-voice 200` (appels d'arnaque synthétiques).
 3. **Fine-tune** : envoie `data/laya/` sur Kaggle dans un dataset **privé** `reflex-laya-data` et lance le notebook.
    Récupère `laya-reflex.zip`, dézippe dans `models/`, puis mets `LAYA_MODEL=./models/laya-reflex` dans `.env`.
+   **Rechoisis les seuils** à partir du rapport (`report_finetuned.json`, qui garde le score de chaque ligne) et mets-les dans
+   `LAYA_CLOSE_THRESHOLD` / `LAYA_BLOCK_THRESHOLD` : le modèle fine-tuné est calibré et garde tous ses scores entre 0,02 et 0,98,
+   donc les valeurs par défaut (0,03 / 0,97) laisseraient passer trop d'attaques.
 4. **Pi-hole** : définis `PIHOLE_PASSWORD` dans `.env`, puis `docker compose up -d pihole`
    (interface sur http://localhost:8081/admin, accessible depuis ce Mac uniquement).
 5. **Bot Telegram** : mets le token de @BotFather dans `TELEGRAM_BOT_TOKEN`, puis lance `reflex-bot`.
@@ -82,6 +97,42 @@ pytest                      # tout doit passer
 - la part des signalements réglés par Laya seul (sans appel au gros modèle) ;
 - les attaques ratées (phishing fermé à tort) et les faux blocages ;
 - la latence et le coût pour 1 000 signalements, comparés à un agent Meta seul.
+
+### Premiers résultats (Laya v1, 27 oct. 2026)
+
+Laya v1 est fine-tuné 3 époques sur le corpus public (17 942 lignes, GPU T4 sur Kaggle).
+Seuils du bot : fermer si p ≤ 0,0235, bloquer si p ≥ 0,9751. Ils ont été choisis sur `val`, puis vérifiés sur `test`.
+
+**Test du corpus public** (2 019 lignes jamais vues) :
+
+| | Laya de base | Laya v1 |
+|---|---|---|
+| Bonnes réponses | 64,3 % | 95,8 % |
+| Calibration (ECE, plus bas = mieux) | 0,264 | 0,016 |
+| Signalements réglés par Laya seul | — | 64 % |
+| Attaques ratées | — | 0,33 % |
+| Faux blocages | — | 0,73 % |
+
+**Test indépendant sur des arnaques récentes** : 1 000 vraies pages PhreshPhish collectées de septembre à décembre 2025,
+dont aucune URL n'apparaît dans l'entraînement.
+
+| | Lien seul | Page entière |
+|---|---|---|
+| Bonnes réponses | 85,8 % | 76,8 % |
+| Attaques ratées (sur 453) | 1 | 36 |
+| Faux blocages (sur 547) | 24 | 8 |
+| Réglés par Laya seul | 27 % | 31 % |
+
+Le corpus public est plus ancien que ces pages : Laya v1 reconnaît mal les fausses pages de connexion modernes.
+Laya v2 ajoute donc 2 500 pages récentes par classe (PhreshPhish, juillet 2024 → septembre 2025, avant la période du test).
+Le même test indépendant mesurera le gain.
+
+**Agent Meta** (`scripts/smoke_meta.py`, sur une fausse page de connexion générée) :
+- Muse Spark reconnaît l'imitation de Microsoft 365 en 4 s, avec ses raisons (domaine sans rapport, mot de passe demandé, urgence) ;
+- SAM 3.1 entoure le QR code, le bouton, le logo et la barre d'adresse ;
+- Voice Transcribe retranscrit mot pour mot un appel d'arnaque en français.
+
+L'ensemble a coûté 0,0175 $.
 
 ## Données et licences
 
@@ -103,3 +154,6 @@ pytest                      # tout doit passer
 - Les clés restent dans `.env`, jamais commité. Les captures et `.eml` de vrais signalements ne vont ni dans git,
   ni vers le mode Contributor.
 - Pi-hole n'écoute que sur `127.0.0.1` et ne démarre pas sans `PIHOLE_PASSWORD`.
+- Le bot ne répond qu'aux comptes de `TELEGRAM_ALLOWED_USERS`, et seulement en conversation privée.
+  Il garde les fichiers en mémoire, sans rien écrire sur le disque, et rend les liens non cliquables (`hxxps://exemple[.]com`)
+  sans aperçu. Son journal ne contient que la décision (canal, route, score, durée), jamais le contenu ni le token.
