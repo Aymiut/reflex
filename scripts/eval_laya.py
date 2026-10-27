@@ -66,11 +66,19 @@ def cascade(p: np.ndarray, y: np.ndarray, close_t: float, block_t: float) -> Dic
     }
 
 
+def _candidates(p: np.ndarray, fixed: List[float], low: bool) -> List[float]:
+    # Un modèle calibré par température resserre ses scores (ex. tous entre 0.02 et 0.98) :
+    # une grille fixe tombe alors à côté. On ajoute des quantiles des scores observés.
+    side = p[p < 0.5] if low else p[p >= 0.5]
+    qs = np.quantile(side, np.linspace(0, 1, 101)).round(4).tolist() if side.size else []
+    return sorted(set(fixed) | set(qs))
+
+
 def best_thresholds(p: np.ndarray, y: np.ndarray, max_missed: float, max_false_block: float) -> Dict:
-    grid = [0.001, 0.003, 0.01, 0.02, 0.03, 0.05, 0.1, 0.2]
+    grid = _candidates(p, [0.001, 0.003, 0.01, 0.02, 0.03, 0.05, 0.1, 0.2], low=True)
     best = None
     for c in grid:
-        for b in (0.8, 0.9, 0.95, 0.97, 0.98, 0.99, 0.995, 0.999):
+        for b in _candidates(p, [0.8, 0.9, 0.95, 0.97, 0.98, 0.99, 0.995, 0.999], low=False):
             r = cascade(p, y, c, b)
             if r["missed_attack_rate"] <= max_missed and r["false_block_rate"] <= max_false_block:
                 if best is None or r["coverage"] > best["coverage"]:

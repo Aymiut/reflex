@@ -58,3 +58,12 @@ def test_cascade_metrics():
     assert r["false_blocks"] == 0
     best = ev.best_thresholds(p, y, max_missed=0.0, max_false_block=0.0)
     assert best["missed_attacks"] == 0
+
+
+def test_thresholds_follow_compressed_scores():
+    # Scores d'un modèle calibré, tous entre 0.02 et 0.98 : la grille fixe seule ne trouvait rien.
+    p = np.array([0.021, 0.022, 0.024, 0.975, 0.976, 0.977])
+    y = np.array([0, 0, 1, 0, 1, 1])
+    best = ev.best_thresholds(p, y, max_missed=0.0, max_false_block=0.0)
+    assert 0.022 <= best["close_threshold"] < 0.024 and 0.975 < best["block_threshold"] <= 0.976
+    assert best["coverage"] == 4 / 6 and best["missed_attacks"] == 0 and best["false_blocks"] == 0
