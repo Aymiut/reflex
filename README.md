@@ -51,6 +51,7 @@ brew install tesseract tesseract-lang ffmpeg
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[laya,data,dev]"
 cp .env.example .env        # puis colle ta clé MODEL_API_KEY
+chmod 600 .env              # lisible par ton compte seulement
 pytest                      # tout doit passer
 ```
 
@@ -62,9 +63,10 @@ pytest                      # tout doit passer
 2. **Données Laya** : `python scripts/build_laya_dataset.py --per-class 3000`
    puis `laya-train --data data/laya/train.jsonl --base multilingual --dry-run` pour vérifier le format.
    Options : `--translate-fr 300` (traductions françaises par Muse Spark) et `--synth-voice 200` (appels d'arnaque synthétiques).
-3. **Fine-tune** : envoie `data/laya/` sur Kaggle (dataset `reflex-laya-data`) et lance le notebook.
+3. **Fine-tune** : envoie `data/laya/` sur Kaggle dans un dataset **privé** `reflex-laya-data` et lance le notebook.
    Récupère `laya-reflex.zip`, dézippe dans `models/`, puis mets `LAYA_MODEL=./models/laya-reflex` dans `.env`.
-4. **Pi-hole** : `docker compose up -d pihole` (interface sur http://localhost:8081/admin).
+4. **Pi-hole** : définis `PIHOLE_PASSWORD` dans `.env`, puis `docker compose up -d pihole`
+   (interface sur http://localhost:8081/admin, accessible depuis ce Mac uniquement).
 
 ## Ce qu'on mesure
 
@@ -74,8 +76,21 @@ pytest                      # tout doit passer
 
 ## Données et licences
 
-- [ealvaradob/phishing-dataset](https://huggingface.co/datasets/ealvaradob/phishing-dataset) — Apache-2.0
-- [PhreshPhish](https://huggingface.co/datasets/KevinRoshan8/phreshphish) — CC BY 4.0, usage recherche anti-phishing
+- [ealvaradob/phishing-dataset](https://huggingface.co/datasets/ealvaradob/phishing-dataset) — Apache-2.0.
+  Compile quatre sources publiques : e-mails ([Kaggle](https://www.kaggle.com/datasets/subhajournal/phishingemails)),
+  SMS ([Mendeley Data](https://data.mendeley.com/datasets/f45bkkt8pr/1)),
+  URLs ([Kaggle](https://www.kaggle.com/datasets/harisudhan411/phishing-and-legitimate-urls)),
+  pages web ([Mendeley Data](https://data.mendeley.com/datasets/n96ncsr5g4/1)).
+- [PhreshPhish](https://huggingface.co/datasets/phreshphish/phreshphish) (Dalton et al., 2025,
+  [arXiv:2507.10854](https://arxiv.org/abs/2507.10854)) — CC BY 4.0, réservé à la recherche anti-phishing.
 - [Laya](https://huggingface.co/convaiinnovations/laya) — Apache-2.0
 - Aucune donnée réelle d'hôpital. Le mode Contributor de Muse Spark (moins cher, Meta peut entraîner dessus)
   ne sert qu'aux données publiques ou synthétiques.
+
+## Sécurité et données personnelles
+
+- Ces corpus publics contiennent des données personnelles réelles (e-mails d'entreprise, noms, numéros) :
+  les fichiers générés restent dans `data/` (hors git), le dataset Kaggle reste privé, rien n'est republié.
+- Les clés restent dans `.env`, jamais commité. Les captures et `.eml` de vrais signalements ne vont ni dans git,
+  ni vers le mode Contributor.
+- Pi-hole n'écoute que sur `127.0.0.1` et ne démarre pas sans `PIHOLE_PASSWORD`.

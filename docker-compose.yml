@@ -2,16 +2,18 @@
 # Le service applicatif (bot + pipeline + navigateur isolé) arrive dans les prochains jours.
 services:
   pihole:
-    image: pihole/pihole:2025.03.0
+    image: pihole/pihole:2026.10.0
     container_name: reflex-pihole
     environment:
       TZ: Europe/Paris
-      FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD:-change-moi}
+      # Pas de mot de passe par défaut : docker compose refuse de démarrer tant qu'il n'est pas défini dans .env.
+      FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD:?définis PIHOLE_PASSWORD dans .env}
       FTLCONF_dns_listeningMode: all
+    # Ports ouverts sur 127.0.0.1 seulement : invisibles depuis le reste du réseau (wifi partagé, etc.).
     ports:
-      - "8081:80/tcp"     # interface web + API : http://localhost:8081/admin
-      - "1053:53/tcp"     # DNS sur 1053 pour ne pas gêner celui du Mac
-      - "1053:53/udp"
+      - "127.0.0.1:8081:80/tcp"     # interface web + API : http://localhost:8081/admin
+      - "127.0.0.1:1053:53/tcp"     # DNS sur 1053 pour ne pas gêner celui du Mac
+      - "127.0.0.1:1053:53/udp"
     volumes:
       - pihole:/etc/pihole
     restart: unless-stopped

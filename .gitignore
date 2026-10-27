@@ -10,3 +10,9 @@ models/
 *.tgz
 .bot_api
 *.egg-info/
+# Secrets et signalements réels : jamais dans git
+.env.*
+!.env.example
+*.pem
+*.key
+*.eml
