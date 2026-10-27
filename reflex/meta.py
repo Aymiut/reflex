@@ -32,6 +32,11 @@ class Usage:
     def add_call(self, name: str) -> None:
         self.calls[name] = self.calls.get(name, 0) + 1
 
+    def cost_usd(self) -> float:
+        """Coût estimé au tarif de la Meta Model API (Muse Spark 1.3, SAM 3.1, Voice Transcribe)."""
+        return (self.input_tokens * 1.25e-6 + self.output_tokens * 4.25e-6
+                + self.sam_images * 0.0025 + self.audio_seconds / 3600 * 0.18)
+
 
 def image_data_url(image: bytes) -> str:
     """Encode une image en data URL base64 (format accepté par `input_image.image_url`)."""

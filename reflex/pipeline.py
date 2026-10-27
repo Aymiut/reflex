@@ -1,7 +1,7 @@
 """Chaîne locale d'un signalement : étage 0 (extraction) puis étage 1 (Laya).
 
 Indépendante de Telegram : le bot (reflex/bot.py) reçoit les fichiers et affiche le résultat.
-L'étage 2 (agent Meta) se branchera sur les cas `escalate`.
+Les cas `escalate` partent ensuite à l'agent Meta (reflex/agent.py), lancé par le bot.
 """
 from __future__ import annotations
 
@@ -39,6 +39,7 @@ class Analysis:
     signals: List[str] = field(default_factory=list)   # signaux des URLs, sans doublon
     has_qr: bool = False
     latency_ms: float = 0.0
+    extraction: Optional[Extraction] = field(default=None, repr=False)  # pour l'agent de l'étage 2
 
 
 class Pipeline:
@@ -54,13 +55,13 @@ class Pipeline:
 
     def analyze(self, ex: Extraction) -> Analysis:
         if not ((ex.text or "").strip() or ex.urls or ex.qr):
-            return Analysis(route=UNREADABLE, p_phishing=None, channel=ex.channel)
+            return Analysis(route=UNREADABLE, p_phishing=None, channel=ex.channel, extraction=ex)
         with self._lock:
             decision = self.triage.decide(ex)
         signals = list(dict.fromkeys(s for info in ex.url_infos for s in info.signals))
         return Analysis(route=decision.route, p_phishing=decision.p_phishing, channel=ex.channel,
                         urls=list(ex.urls), signals=signals, has_qr=bool(ex.qr),
-                        latency_ms=decision.latency_ms)
+                        latency_ms=decision.latency_ms, extraction=ex)
 
     def _timed(self, make: Callable[[], Extraction]) -> Analysis:
         """Analyse complète, extraction comprise : c'est le délai que voit l'agent."""

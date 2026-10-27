@@ -25,6 +25,8 @@ laya = ["laya>=0.4.15"]
 data = ["huggingface_hub>=0.24", "pandas>=2.1", "datasets>=2.20"]
 dev = ["pytest>=8"]
 bot = ["python-telegram-bot>=22.8"]
+# Navigateur headless de l'agent (étage 2) : ouvre les liens suspects à part
+agent = ["playwright>=1.64"]
 
 [project.scripts]
 reflex-bot = "reflex.bot:main"

@@ -7,6 +7,9 @@ Sécurité :
   leur identifiant pour que le service informatique puisse les ajouter ;
 - fichiers et textes restent en mémoire, rien n'est écrit sur le disque ;
 - le journal ne contient que la décision (canal, route, score, durée), jamais le contenu ni le token.
+
+Deux vitesses : Laya répond tout de suite ; si le cas est incertain (escalate), l'agent Meta (reflex/agent.py)
+l'examine en arrière-plan et le bot envoie un second message avec son verdict et l'image annotée.
 """
 from __future__ import annotations
 
@@ -20,11 +23,13 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from .config import Settings, get_settings
 from .pipeline import Analysis, Pipeline
-from .replies import format_reply, texts
+from .replies import format_finding, format_reply, texts
+from .triage import ESCALATE
 
 log = logging.getLogger("reflex.bot")
 
 MAX_FILE_MB = 10
+AGENT_SLOTS = 2  # examens simultanés au plus (navigateur + appels Meta)
 # Les liens des réponses sont désarmés ; on coupe en plus l'aperçu, pour que Telegram n'aille jamais sur la page.
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
@@ -54,8 +59,31 @@ async def _download(context: ContextTypes.DEFAULT_TYPE, msg: Message, file_id: s
     return bytes(await file.download_as_bytearray())
 
 
+async def _investigate(msg: Message, context: ContextTypes.DEFAULT_TYPE, analysis: Analysis,
+                      image: Optional[bytes]) -> None:
+    """Second message : le verdict de l'agent Meta, avec l'image annotée quand il y en a une."""
+    settings: Settings = context.bot_data["settings"]
+    async with context.bot_data["agent_slots"]:
+        await context.bot.send_chat_action(msg.chat_id, ChatAction.TYPING)
+        try:
+            finding = await asyncio.to_thread(context.bot_data["agent"].investigate, analysis, image, settings.bot_lang)
+        except Exception:
+            log.exception("Échec de l'agent")
+            await msg.reply_text(texts(settings.bot_lang)["agent_failed"])
+            return
+    page = "-" if finding.visited is None else ("ok" if finding.visited.ok else "échec")
+    log.info("agent verdict=%s garde-fou=%s page=%s sam=%d %.0f ms %.4f $", finding.verdict, finding.guardrail,
+             page, len(finding.highlighted), finding.latency_ms, finding.cost_usd)
+    caption = format_finding(finding, settings.bot_lang)
+    if finding.image:
+        await msg.reply_photo(photo=finding.image, caption=caption)
+    else:
+        await msg.reply_text(caption, link_preview_options=NO_PREVIEW)
+
+
 async def _analyze_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                             work: Callable[[], Analysis], error_key: str = "error") -> None:
+                             work: Callable[[], Analysis], error_key: str = "error",
+                             image: Optional[bytes] = None) -> None:
     settings: Settings = context.bot_data["settings"]
     msg = update.effective_message
     await context.bot.send_chat_action(msg.chat_id, ChatAction.TYPING)
@@ -68,7 +96,12 @@ async def _analyze_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return
     log.info("signalement canal=%s route=%s p=%s %.0f ms", analysis.channel, analysis.route,
              "-" if analysis.p_phishing is None else f"{analysis.p_phishing:.3f}", analysis.latency_ms)
-    await msg.reply_text(format_reply(analysis, settings.bot_lang), link_preview_options=NO_PREVIEW)
+    investigate = context.bot_data.get("agent") is not None and analysis.route == ESCALATE
+    await msg.reply_text(format_reply(analysis, settings.bot_lang, investigating=investigate),
+                         link_preview_options=NO_PREVIEW)
+    if investigate:
+        # En arrière-plan : le bot continue de répondre aux autres pendant l'examen.
+        context.application.create_task(_investigate(msg, context, analysis, image), update=update)
 
 
 # --------------------------------------------------------------------------- handlers
@@ -93,7 +126,7 @@ async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     data = await _download(context, msg, photo.file_id, photo.file_size)
     if data is not None:
         pipeline: Pipeline = context.bot_data["pipeline"]
-        await _analyze_and_reply(update, context, lambda: pipeline.from_image(data))
+        await _analyze_and_reply(update, context, lambda: pipeline.from_image(data), image=data)
 
 
 async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -113,7 +146,8 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     data = await _download(context, msg, doc.file_id, doc.file_size)
     if data is not None:
-        await _analyze_and_reply(update, context, lambda: work(data))
+        await _analyze_and_reply(update, context, lambda: work(data),
+                                 image=data if work == pipeline.from_image else None)
 
 
 async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -137,9 +171,9 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # --------------------------------------------------------------------------- application
-def build_app(settings: Settings, pipeline: Pipeline) -> Application:
+def build_app(settings: Settings, pipeline: Pipeline, agent=None) -> Application:
     app = Application.builder().token(settings.telegram_token).build()
-    app.bot_data.update(settings=settings, pipeline=pipeline)
+    app.bot_data.update(settings=settings, pipeline=pipeline, agent=agent, agent_slots=asyncio.Semaphore(AGENT_SLOTS))
     private = filters.ChatType.PRIVATE  # dans un groupe, le bot ne répond pas
     app.add_handler(CommandHandler(["start", "help"], on_start, filters=private))
     app.add_handler(MessageHandler(private & filters.PHOTO, on_photo))
@@ -164,8 +198,16 @@ def main() -> None:
     pipeline = Pipeline(settings)
     log.info("Chargement de Laya (%s)…", settings.laya_model)
     pipeline.warm_up()
+    agent = None
+    if settings.agent_enabled and settings.meta_api_key:
+        from .agent import Investigator
+
+        agent = Investigator(settings)
+        log.info("Agent Meta actif sur les cas incertains (%s, %s).", settings.spark_model, settings.sam_model)
+    else:
+        log.warning("Agent Meta inactif (AGENT_ENABLED=0 ou MODEL_API_KEY vide) : les cas incertains restent sans examen.")
     log.info("Bot prêt. Ctrl+C pour l'arrêter.")
-    build_app(settings, pipeline).run_polling(allowed_updates=Update.ALL_TYPES)
+    build_app(settings, pipeline, agent).run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,10 @@ from typing import Dict
 from .pipeline import UNREADABLE, Analysis
 from .triage import BLOCK, CLOSE, ESCALATE
 
+# Verdicts de l'agent (reflex/agent.py), recopiés ici pour ne pas importer le navigateur dans les réponses.
+PHISHING, LEGITIMATE, UNSURE = "phishing", "legitimate", "unsure"
+CAPTION_MAX = 1024  # limite Telegram pour la légende d'une photo
+
 MAX_LINKS = 3
 MAX_SIGNS = 5
 
@@ -28,6 +32,18 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "unsupported": "I can read screenshots, photos, .eml emails, voice messages and text. Please send one of those.",
         "voice_failed": "I couldn't transcribe this voice message right now. Paste the text, or try again later.",
         "error": "Something went wrong during the analysis. Please try again.",
+        "investigating": "🔎 Taking a closer look (about 20 s)…",
+        "agent_" + PHISHING: "🚫 Confirmed: phishing{brand}. Don't click, don't reply, delete the message.",
+        "agent_" + LEGITIMATE: "✅ Closer look: this looks legitimate.",
+        "agent_" + UNSURE: "⚠️ Still unclear after a closer look. Don't click: IT will check it.",
+        "agent_brand": " (pretends to be {b})",
+        "agent_guardrail": "The first check found it risky, so I won't call it safe without clear proof.",
+        "agent_why": "Why:",
+        "agent_proof": "Proof: {x}",
+        "agent_page": "The link leads to: {u}",
+        "agent_unreachable": "I couldn't open the link ({e}).",
+        "agent_footer": "Closer look in {s:.0f} s.",
+        "agent_failed": "I couldn't finish the closer look. Treat this message as suspicious until IT confirms.",
     },
     "fr": {
         BLOCK: "🚫 Phishing. Ne clique pas, ne réponds pas, supprime le message.",
@@ -46,6 +62,18 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "unsupported": "Je lis les captures, photos, e-mails .eml, messages vocaux et textes. Envoie l'un de ceux-là.",
         "voice_failed": "Je n'arrive pas à transcrire ce vocal pour l'instant. Colle le texte, ou réessaie plus tard.",
         "error": "Un problème est survenu pendant l'analyse. Réessaie.",
+        "investigating": "🔎 J'examine de plus près (environ 20 s)…",
+        "agent_" + PHISHING: "🚫 Confirmé : phishing{brand}. Ne clique pas, ne réponds pas, supprime le message.",
+        "agent_" + LEGITIMATE: "✅ Après examen : ça semble légitime.",
+        "agent_" + UNSURE: "⚠️ Toujours incertain après examen. Ne clique pas : l'informatique va vérifier.",
+        "agent_brand": " (se fait passer pour {b})",
+        "agent_guardrail": "Le premier tri le jugeait risqué : je ne le déclare pas sûr sans preuve claire.",
+        "agent_why": "Pourquoi :",
+        "agent_proof": "Preuve : {x}",
+        "agent_page": "Le lien mène à : {u}",
+        "agent_unreachable": "Je n'ai pas pu ouvrir le lien ({e}).",
+        "agent_footer": "Examen en {s:.0f} s.",
+        "agent_failed": "Je n'ai pas pu terminer l'examen. Considère ce message comme suspect jusqu'à confirmation de l'informatique.",
     },
 }
 
@@ -86,6 +114,14 @@ def defang(url: str, max_len: int = 90) -> str:
     return out if len(out) <= max_len else out[: max_len - 1] + "…"
 
 
+_DOMAIN_LIKE = re.compile(r"\b(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s]*)?", re.IGNORECASE)
+
+
+def defang_text(text: str) -> str:
+    """Désarme les adresses glissées dans une phrase (Telegram rend cliquable un simple « exemple.com »)."""
+    return _DOMAIN_LIKE.sub(lambda m: defang(m.group(0)), text)
+
+
 def describe(signal: str, lang: str) -> str:
     key, _, value = signal.partition(":")
     template = SIGNS.get(lang, SIGNS["en"]).get(key)
@@ -94,11 +130,11 @@ def describe(signal: str, lang: str) -> str:
     return template.format(x=value.capitalize() if key == "brand-lookalike" else value)
 
 
-def format_reply(a: Analysis, lang: str = "en") -> str:
+def format_reply(a: Analysis, lang: str = "en", investigating: bool = False) -> str:
     t = texts(lang)
     if a.route == UNREADABLE:
         return t[UNREADABLE]
-    lines = [t[a.route], t["score"].format(p=a.p_phishing)]
+    lines = [t[a.route]] + ([t["investigating"]] if investigating else []) + [t["score"].format(p=a.p_phishing)]
     if a.signals:
         lines += ["", t["signs"]] + [f"• {describe(s, lang)}" for s in a.signals[:MAX_SIGNS]]
     if a.urls:
@@ -107,3 +143,25 @@ def format_reply(a: Analysis, lang: str = "en") -> str:
         lines += ["", t["qr"]]
     lines += ["", t["footer"].format(s=a.latency_ms / 1000)]
     return "\n".join(lines)
+
+
+def format_finding(f, lang: str = "en") -> str:
+    """Réponse de l'agent (reflex.agent.Finding), assez courte pour tenir en légende de photo."""
+    t = texts(lang)
+    brand = t["agent_brand"].format(b=f.brand) if f.brand else ""
+    lines = [t["agent_" + f.verdict].format(brand=brand)]
+    if f.guardrail:
+        lines.append(t["agent_guardrail"])
+    if f.reasons:
+        lines += ["", t["agent_why"]] + [f"• {defang_text(r)}" for r in f.reasons]
+    if f.proof:
+        lines.append(t["agent_proof"].format(x=defang_text(f.proof)))
+    if f.visited is not None:
+        lines.append("")
+        if f.visited.ok:
+            lines.append(t["agent_page"].format(u=defang(f.visited.final_url or f.visited.url)))
+        else:
+            lines.append(t["agent_unreachable"].format(e=defang_text(f.visited.error)[:120]))
+    lines += ["", t["agent_footer"].format(s=f.latency_ms / 1000)]
+    text = "\n".join(lines)
+    return text if len(text) <= CAPTION_MAX else text[: CAPTION_MAX - 1] + "…"

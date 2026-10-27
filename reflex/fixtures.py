@@ -51,18 +51,37 @@ def fake_login_png(url: str = DEMO_URL, with_qr: bool = True) -> bytes:
     return buf.getvalue()
 
 
+def fake_login_html(brand: str = "Microsoft 365") -> str:
+    """Fausse page « session expirée » en HTML, servie en local pour tester le navigateur de l'agent."""
+    return f"""<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>{brand} - Session expirée</title>
+<style>body{{font-family:sans-serif;background:#f3f3f3}} .card{{width:420px;margin:80px auto;background:#fff;padding:32px}}
+input{{display:block;width:100%;margin:8px 0 16px;padding:8px}} button{{background:#0067b8;color:#fff;border:0;padding:10px 24px}}</style>
+</head><body><div class="card">
+<h1>Votre session {brand} a expiré</h1>
+<p>Reconnectez-vous sous 24 h pour garder l'accès à votre messagerie.</p>
+<form action="/collect" method="post">
+<label>Adresse e-mail</label><input type="email" name="email">
+<label>Mot de passe</label><input type="password" name="password">
+<button type="submit">Se connecter</button></form></div></body></html>"""
+
+
 def draw_boxes(image: bytes, boxes, color=(220, 20, 60), label: str = "") -> bytes:
     """Entoure les boîtes SAM sur l'image (overlay pour l'utilisateur)."""
     from PIL import Image, ImageDraw
 
     img = Image.open(io.BytesIO(image)).convert("RGB")
     d = ImageDraw.Draw(img)
-    for b in boxes:
+    font = _font(22)
+    for i, b in enumerate(boxes):
         b = b.scaled(img.width, img.height)
         pad = 8
         d.ellipse([b.x1 - pad * 3, b.y1 - pad * 2, b.x2 + pad * 3, b.y2 + pad * 2], outline=color, width=5)
-        if label:
-            d.text((b.x1, max(0, b.y1 - 34)), label, fill=color, font=_font(24))
+        if label and i == 0:  # une étiquette par expression, sur fond plein pour rester lisible sur la page
+            x, y = max(0, b.x1 - pad * 3), max(0, b.y1 - pad * 2 - 36)
+            left, top, right, bottom = d.textbbox((x, y), label, font=font)
+            d.rectangle([left - 6, top - 4, right + 6, bottom + 4], fill=color)
+            d.text((x, y), label, fill="white", font=font)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()

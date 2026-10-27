@@ -39,7 +39,7 @@ Garde-fou : l'agent n'a pas le droit de conclure « légitime » sur un cas que 
 | Laya réentraîné avec des pages de phishing récentes (PhreshPhish 2024-2025) | entraînement en cours (v2) |
 | Bot Telegram (captures, photos, `.eml`, vocaux, textes, liens) | fait, sur liste d'utilisateurs autorisés |
 | Accès Meta : Muse Spark, SAM 3.1, Voice Transcribe | vérifié |
-| Étage 2 : agent Meta sur les cas incertains | en cours |
+| Étage 2 : agent Meta sur les cas incertains (navigateur isolé, Muse Spark, SAM 3.1) | fait, branché sur le bot |
 | Blocage DNS par Pi-hole | à faire |
 
 ## Ce qui existe aujourd'hui
@@ -50,6 +50,8 @@ Garde-fou : l'agent n'a pas le droit de conclure « légitime » sur un cas que 
 | `reflex/state.py` | Ce que Laya lit. **Même fonction à l'entraînement et à l'inférence** |
 | `reflex/triage.py` | Étage 1 : Laya et les seuils fermer / bloquer / escalader |
 | `reflex/meta.py` | Client Meta Model API : Muse Spark, SAM 3.1, Voice Transcribe ; Muse Glimmer via un fournisseur |
+| `reflex/agent.py` | Étage 2 : ouvre le lien, verdict motivé de Muse Spark, garde-fou, preuves entourées par SAM 3.1 |
+| `reflex/browser.py` | Navigateur isolé de l'agent : Chromium headless jetable derrière un proxy qui refuse le réseau local |
 | `reflex/sam_format.py` | Lecture de la sortie de SAM 3.1 (boîtes) |
 | `reflex/pipeline.py` | Chaîne d'un signalement : étage 0 puis Laya, indépendante de Telegram |
 | `reflex/bot.py` | Bot Telegram (`reflex-bot`) : captures, photos, `.eml`, vocaux, textes et liens |
@@ -65,7 +67,8 @@ Garde-fou : l'agent n'a pas le droit de conclure « légitime » sur un cas que 
 ```bash
 brew install tesseract tesseract-lang ffmpeg
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[laya,data,dev,bot]"
+pip install -e ".[laya,data,dev,bot,agent]"
+python -m playwright install --only-shell chromium   # navigateur headless de l'agent (~200 Mo)
 cp .env.example .env        # puis colle ta clé MODEL_API_KEY
 chmod 600 .env              # lisible par ton compte seulement
 pytest                      # tout doit passer
@@ -91,6 +94,8 @@ pytest                      # tout doit passer
 5. **Bot Telegram** : mets le token de @BotFather dans `TELEGRAM_BOT_TOKEN`, puis lance `reflex-bot`.
    Le bot ne répond qu'aux identifiants listés dans `TELEGRAM_ALLOWED_USERS` : envoie-lui `/start`,
    il te donne ton identifiant, ajoute-le, puis relance-le. Réponses en anglais par défaut (`BOT_LANG=fr` pour le français).
+   Sur un cas incertain, le bot répond tout de suite, puis l'agent Meta envoie environ 10 s plus tard un second message :
+   son verdict, ses raisons et la page ouverte, avec les preuves entourées. `AGENT_ENABLED=0` coupe l'agent.
 
 ## Ce qu'on mesure
 
@@ -134,6 +139,13 @@ Le même test indépendant mesurera le gain.
 
 L'ensemble a coûté 0,0175 $.
 
+**Agent complet** (SMS piégé dont le lien mène à une fausse page Microsoft 365 servie en local) :
+- le navigateur isolé ouvre la page ;
+- Muse Spark confirme le phishing avec ses raisons (menace de suspension, lien hors de Microsoft, mot de passe demandé) ;
+- SAM 3.1 entoure les champs de saisie et le bouton.
+
+Tout cela prend 8 à 10 s, pour environ 0,015 $ par examen.
+
 ## Données et licences
 
 - [ealvaradob/phishing-dataset](https://huggingface.co/datasets/ealvaradob/phishing-dataset) — Apache-2.0.
@@ -154,6 +166,17 @@ L'ensemble a coûté 0,0175 $.
 - Les clés restent dans `.env`, jamais commité. Les captures et `.eml` de vrais signalements ne vont ni dans git,
   ni vers le mode Contributor.
 - Pi-hole n'écoute que sur `127.0.0.1` et ne démarre pas sans `PIHOLE_PASSWORD`.
+- L'agent n'ouvre les liens que dans un processus à part, avec un délai maximal et un environnement sans aucune clé.
+  - Chromium y tourne avec sa sandbox, sans cookies ni profil. Il ne télécharge rien et bloque les WebSockets et les popups.
+  - Un proxy local résout chaque nom de domaine et refuse toute adresse non publique (localhost, box, Pi-hole, intranet),
+    y compris après une redirection.
+  - L'agent ne remplit aucun formulaire.
+
+  Limite connue : ouvrir un lien peut signaler à l'attaquant qu'il a été visité.
+- Seuls les cas incertains partent vers Muse Spark et SAM 3.1, en mode normal de la Meta Model API, jamais en mode Contributor.
+  Les cas que Laya règle seul ne quittent pas la machine, sauf les vocaux, dont la transcription passe par Voice Transcribe.
+- Garde-fou : si Laya jugeait le cas risqué, « légitime » exige une preuve. Il exige aussi des adresses sans aucun signal d'alerte,
+  et ces signaux sont calculés en local : un texte piégé ne peut pas les effacer.
 - Le bot ne répond qu'aux comptes de `TELEGRAM_ALLOWED_USERS`, et seulement en conversation privée.
   Il garde les fichiers en mémoire, sans rien écrire sur le disque, et rend les liens non cliquables (`hxxps://exemple[.]com`)
   sans aperçu. Son journal ne contient que la décision (canal, route, score, durée), jamais le contenu ni le token.

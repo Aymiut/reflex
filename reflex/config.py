@@ -54,6 +54,9 @@ class Settings:
     # Garde-fou : au-dessus de ce seuil, l'agent ne peut pas conclure "légitime" sans preuve
     risky_threshold: float = field(default_factory=lambda: _float("LAYA_RISKY_THRESHOLD", 0.5))
 
+    # Étage 2 : l'agent Meta examine les cas incertains (escalate). AGENT_ENABLED=0 pour le couper.
+    agent_enabled: bool = field(default_factory=lambda: os.environ.get("AGENT_ENABLED", "1") not in ("0", "false", "no"))
+
     # Telegram
     telegram_token: str = field(default_factory=lambda: os.environ.get("TELEGRAM_BOT_TOKEN", ""))
     # Comptes autorisés à utiliser le bot. Vide = personne (le bot répond avec l'identifiant à ajouter).

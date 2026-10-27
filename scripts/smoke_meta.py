@@ -151,7 +151,7 @@ def main() -> int:
         if want("voice"):
             check_voice(client, args.audio)
         u = client.usage
-        cost = u.input_tokens * 1.25e-6 + u.output_tokens * 4.25e-6 + u.sam_images * 0.0025 + u.audio_seconds / 3600 * 0.18
+        cost = u.cost_usd()
         print(f"\nConsommation : {u.input_tokens} tokens en entrée, {u.output_tokens} en sortie, "
               f"{u.sam_images} images SAM, {u.audio_seconds:.0f} s d'audio ≈ {cost:.4f} $")
 
