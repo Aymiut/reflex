@@ -86,7 +86,8 @@ def best_thresholds(p: np.ndarray, y: np.ndarray, max_missed: float, max_false_b
     return best or cascade(p, y, 0.0, 1.0 + 1e-9)
 
 
-def evaluate(agent, path: str, max_missed: float, max_false_block: float) -> Dict:
+def evaluate(agent, path: str, max_missed: float, max_false_block: float,
+             close_t: float = 0.03, block_t: float = 0.97) -> Dict:
     rows = read_jsonl(path)
     y = np.array([1 if r["expected"]["verdict"] == PHISHING else 0 for r in rows])
     t0 = time.perf_counter()
@@ -108,8 +109,11 @@ def evaluate(agent, path: str, max_missed: float, max_false_block: float) -> Dic
         "ece": ece(p, y),
         "ms_per_item_batched": elapsed * 1000 / max(1, len(rows)),
         "by_channel": by_channel,
-        "cascade_default": cascade(p, y, 0.03, 0.97),
+        "cascade_at_thresholds": cascade(p, y, close_t, block_t),       # seuils donnés (ceux du bot)
         "cascade_best": best_thresholds(p, y, max_missed, max_false_block),
+        # Scores ligne par ligne : on peut rechoisir les seuils plus tard sans relancer le modèle.
+        "scores": [round(float(x), 6) for x in p],
+        "labels": [int(v) for v in y],
     }
 
 
@@ -120,19 +124,25 @@ def main() -> int:
     ap.add_argument("--device", default=None)
     ap.add_argument("--max-missed", type=float, default=0.005, help="taux max d'attaques fermées à tort")
     ap.add_argument("--max-false-block", type=float, default=0.02, help="taux max de légitimes bloqués à tort")
+    ap.add_argument("--close-threshold", type=float, default=0.03, help="seuil « fermer » du bot (LAYA_CLOSE_THRESHOLD)")
+    ap.add_argument("--block-threshold", type=float, default=0.97, help="seuil « bloquer » du bot (LAYA_BLOCK_THRESHOLD)")
     ap.add_argument("--out", default="laya_report.json")
     args = ap.parse_args()
 
     import laya
 
     agent = laya.load(args.model, device=args.device)
-    report = [evaluate(agent, d, args.max_missed, args.max_false_block) for d in args.data]
+    report = [evaluate(agent, d, args.max_missed, args.max_false_block, args.close_threshold, args.block_threshold)
+              for d in args.data]
     Path(args.out).write_text(json.dumps(report, indent=2, ensure_ascii=False))
     for r in report:
-        b = r["cascade_best"]
+        a, b = r["cascade_at_thresholds"], r["cascade_best"]
         print(f"\n{r['file']} (n={r['n']}) accuracy={r['accuracy']:.3f} precision={r['precision']:.3f} "
               f"recall={r['recall']:.3f} ECE={r['ece']:.3f} {r['ms_per_item_batched']:.1f} ms/item")
-        print(f"  seuils retenus : fermer si p<={b['close_threshold']}, bloquer si p>={b['block_threshold']} "
+        print(f"  seuils donnés : fermer si p<={a['close_threshold']}, bloquer si p>={a['block_threshold']} "
+              f"-> Laya règle {a['coverage']:.1%} seul, {a['escalated']:.1%} vont à l'agent, "
+              f"{a['missed_attacks']} attaques ratées, {a['false_blocks']} faux blocages")
+        print(f"  meilleurs seuils sur ce fichier : fermer si p<={b['close_threshold']}, bloquer si p>={b['block_threshold']} "
               f"-> Laya règle {b['coverage']:.1%} seul, {b['escalated']:.1%} vont à l'agent, "
               f"{b['missed_attacks']} attaques ratées, {b['false_blocks']} faux blocages")
     print("\nRapport complet :", args.out)

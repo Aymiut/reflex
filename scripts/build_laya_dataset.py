@@ -5,11 +5,13 @@ L'état est produit par reflex.state.build_state, exactement comme à l'inféren
 
 Sources :
 - ealvaradob/phishing-dataset (Apache-2.0) : e-mails, SMS, URLs, pages web — en anglais ;
-- optionnel : PhreshPhish (CC BY 4.0, recherche anti-phishing uniquement) : URL + HTML récents ;
+- optionnel : PhreshPhish (CC BY 4.0, recherche anti-phishing uniquement) : vraies pages de 2024-2025,
+  en page entière (URL + HTML) et en lien seul ;
 - optionnel : traductions françaises et appels (vishing) synthétiques générés par Muse Spark.
 
     python scripts/build_laya_dataset.py --per-class 3000
-    python scripts/build_laya_dataset.py --per-class 3000 --phreshphish 1500 --translate-fr 300 --synth-voice 200
+    python scripts/build_laya_dataset.py --per-class 3000 --phreshphish 2500
+    python scripts/build_laya_dataset.py --per-class 3000 --phreshphish 2500 --translate-fr 300 --synth-voice 200
 
 Sorties dans data/laya/ : train.jsonl, val.jsonl, test.jsonl (+ test_fr.jsonl, test_voice.jsonl si générés).
 """
@@ -127,26 +129,74 @@ def load_ealvaradob() -> Dict[str, List[tuple]]:
     return by_channel
 
 
-def load_phreshphish(n_per_class: int, seed: int) -> List[tuple]:
-    from datasets import load_dataset
+def phreshphish_extraction(url: str, html: str) -> Optional[Extraction]:
+    """Une page PhreshPhish (adresse + HTML) vue comme le canal page : l'adresse d'abord, puis les liens de la page."""
+    html = (html or "")[:200_000]
+    ex = Extraction(channel="page", text=html_to_text(html) if html else "",
+                    urls=find_urls(url or "")[:1] + find_urls("\n".join(html_links(html)[:20]))[:4])
+    return ex if ex.urls or ex.text else None
 
-    ds = load_dataset(PHRESHPHISH, split="train", streaming=True).shuffle(seed=seed, buffer_size=10_000)
-    counts: Counter = Counter()
+
+def load_phreshphish(n_per_class: int, seed: int, shards: List[str]) -> List[tuple]:
+    """[(ligne page, ligne lien seul), ...] tirés du split train de PhreshPhish (juil. 2024 → sept. 2025).
+
+    Le split complet pèse environ 145 Go : on télécharge seulement quelques fichiers (shards) d'environ 300 à 550 Mo,
+    chacun mêlant toute la période. On tire les pages sur la seule colonne label, puis on ne lit le HTML que par lots.
+    Le split test reste réservé à build_phreshphish_test.py.
+    """
+    import pyarrow.parquet as pq
+    from huggingface_hub import hf_hub_download
+
+    rnd = random.Random(seed)
+    files, pool = {}, defaultdict(list)
+    for shard in shards:
+        if not shard.startswith("train-"):
+            raise SystemExit("--phreshphish-shards : seulement des shards train-* (le test sert à l'évaluation)")
+        files[shard] = pq.ParquetFile(hf_hub_download(PHRESHPHISH, f"data/{shard}.parquet", repo_type="dataset"))
+        for i, lab in enumerate(files[shard].read(columns=["label"]).column("label").to_pylist()):
+            label = label_of(str(lab).lower())
+            if label:
+                pool[label].append((shard, i))
+    picked = {key for label in (PHISHING, LEGITIMATE)
+              for key in rnd.sample(pool[label], min(n_per_class, len(pool[label])))}
+
     out: List[tuple] = []
-    for r in ds:
-        label = label_of(str(r.get("label", "")).lower())
-        if not label or counts[label] >= n_per_class:
-            if all(counts[l] >= n_per_class for l in (PHISHING, LEGITIMATE)):
-                break
-            continue
-        html = (r.get("html") or "")[:200_000]
-        ex = Extraction(channel="page", text=html_to_text(html) if html else "",
-                        urls=find_urls(r.get("url", ""))[:1] + find_urls("\n".join(html_links(html)[:20]))[:4])
-        if ex.urls or ex.text:
-            out.append((ex, label))
-            counts[label] += 1
-    print(f"PhreshPhish : {dict(counts)}")
+    for shard, pf in files.items():
+        i = 0
+        for batch in pf.iter_batches(batch_size=200, columns=["url", "html", "label"]):
+            cols = batch.to_pydict()
+            for url, html, lab in zip(cols["url"], cols["html"], cols["label"]):
+                if (shard, i) in picked:
+                    label = label_of(str(lab).lower())
+                    page = phreshphish_extraction(url, html)
+                    link = to_extraction("url", url or "")
+                    if page is not None:
+                        out.append((row(page, label, "phreshphish"),
+                                    row(link, label, "phreshphish") if link is not None else None))
+                i += 1
+    print(f"PhreshPhish ({', '.join(shards)}) : " + ", ".join(
+        f"{l}={sum(1 for p, _ in out if p['expected']['verdict'] == l)}" for l in (PHISHING, LEGITIMATE)) +
+        " pages, chacune aussi en lien seul")
     return out
+
+
+def split_pairs(pairs: List[tuple], seed: int):
+    """Découpe des couples (page, lien seul) : les deux lignes d'un même site vont dans la même partie,
+    sinon le modèle verrait à l'entraînement le lien d'une page de test."""
+    pages = []
+    for i, (page, _) in enumerate(pairs):
+        page["_pair"] = i
+        pages.append(page)
+    parts = split(dedupe(pages), seed)
+    seen = set()
+    for part in parts:
+        for r in list(part):
+            link = pairs[r.pop("_pair")][1]
+            key = link and json.dumps(link["state"], sort_keys=True, ensure_ascii=False)
+            if link is not None and key not in seen:
+                seen.add(key)
+                part.append(link)
+    return parts
 
 
 # --------------------------------------------------------------------------- génération par Muse Spark
@@ -249,7 +299,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "data" / "laya"))
     ap.add_argument("--per-class", type=int, default=3000, help="max par canal et par classe (ealvaradob)")
-    ap.add_argument("--phreshphish", type=int, default=0, help="pages PhreshPhish par classe (0 = aucune)")
+    ap.add_argument("--phreshphish", type=int, default=0,
+                    help="pages PhreshPhish récentes par classe, chacune aussi en lien seul (0 = aucune)")
+    ap.add_argument("--phreshphish-shards", nargs="+", default=["train-001"],
+                    help="fichiers du split train à télécharger (train-001 : 320 Mo, 5 780 pages)")
     ap.add_argument("--image-copies", type=float, default=0.15,
                     help="part des e-mails/SMS/pages recopiés avec channel=image (l'OCR donne ce genre de texte)")
     ap.add_argument("--translate-fr", type=int, default=0, help="nb de messages traduits en français par Muse Spark")
@@ -271,11 +324,13 @@ def main() -> int:
                 ex = to_extraction(channel, text)
                 if ex is not None:
                     rows.append(row(ex, label, "ealvaradob"))
-    if args.phreshphish:
-        rows += [row(ex, label, "phreshphish") for ex, label in load_phreshphish(args.phreshphish, args.seed)]
-
     rows = dedupe(rows)
     train, val, test = split(rows, args.seed)
+    if args.phreshphish:
+        for part, extra in zip((train, val, test),
+                               split_pairs(load_phreshphish(args.phreshphish, args.seed, args.phreshphish_shards),
+                                           args.seed)):
+            part += extra
 
     # Copies "image" : à l'inférence, le texte d'une capture vient de l'OCR (canal image).
     for part in (train, val):

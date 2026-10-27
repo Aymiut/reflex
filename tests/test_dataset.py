@@ -32,6 +32,32 @@ def test_texts_file_is_split_into_email_and_sms():
     assert build._text_channel("Dear user, " + "x" * 500) == "email"
 
 
+def test_phreshphish_page_puts_its_address_first():
+    ex = build.phreshphish_extraction(
+        "https://secure-login.example.top/verify",
+        '<html><a href="https://cdn.example.com/a">go</a><p>Sign in to continue</p></html>')
+    assert ex.channel == "page" and "Sign in" in ex.text
+    assert ex.urls == ["https://secure-login.example.top/verify", "https://cdn.example.com/a"]
+    assert build.phreshphish_extraction("", "") is None
+
+
+def test_split_pairs_keeps_page_and_link_together():
+    pairs = []
+    for i in range(60):
+        label = "phishing" if i % 2 else "legitimate"
+        url = f"https://site{i}.example.com/login"
+        pairs.append((build.row(build.phreshphish_extraction(url, f"<p>Page {i}</p>"), label, "t"),
+                      build.row(build.to_extraction("url", url), label, "t")))
+    parts = build.split_pairs(pairs, seed=3)
+    where = {}
+    for name, part in zip(("train", "val", "test"), parts):
+        assert all("_pair" not in r for r in part)
+        for r in part:
+            where.setdefault(r["state"]["urls"][0], set()).add(name)
+    assert len(where) == 60 and all(len(v) == 1 for v in where.values())
+    assert sum(len(p) for p in parts) == 120
+
+
 def test_labels_and_rows():
     assert build.label_of(1) == "phishing" and build.label_of("ham") == "legitimate" and build.label_of("?") is None
     r = build.row(build.to_extraction("sms", "Hello"), "legitimate", "test")

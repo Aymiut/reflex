@@ -45,6 +45,7 @@ Garde-fou : l'agent n'a pas le droit de conclure « légitime » sur un cas que 
 | `scripts/smoke_meta.py` | Vérifie en une minute que ta clé donne accès à tout |
 | `scripts/build_laya_dataset.py` | Fabrique les données d'entraînement de Laya |
 | `scripts/eval_laya.py` | Mesure Laya et choisit les seuils de la cascade |
+| `scripts/build_phreshphish_test.py` | Test indépendant sur de vraies pages récentes (sept. → déc. 2025) |
 | `notebooks/finetune_laya_kaggle.ipynb` | Fine-tune de Laya sur GPU Kaggle gratuit |
 
 ## Installation (Mac)
@@ -63,7 +64,9 @@ pytest                      # tout doit passer
 1. **Accès Meta** : `python scripts/smoke_meta.py`
    Teste les modèles disponibles, Muse Spark sur une fausse page de connexion, SAM 3.1 (« QR code », « text field »…),
    et Voice Transcribe en français (audio généré avec `say`). Résultats dans `data/smoke/`.
-2. **Données Laya** : `python scripts/build_laya_dataset.py --per-class 3000`
+2. **Données Laya** : `python scripts/build_laya_dataset.py --per-class 3000 --phreshphish 2500`
+   (corpus public + 2 500 vraies pages récentes par classe, en page entière et en lien seul),
+   puis `python scripts/build_phreshphish_test.py` pour le test indépendant (pages collectées après celles de l'entraînement),
    puis `laya-train --data data/laya/train.jsonl --base multilingual --dry-run` pour vérifier le format.
    Options : `--translate-fr 300` (traductions françaises par Muse Spark) et `--synth-voice 200` (appels d'arnaque synthétiques).
 3. **Fine-tune** : envoie `data/laya/` sur Kaggle dans un dataset **privé** `reflex-laya-data` et lance le notebook.
